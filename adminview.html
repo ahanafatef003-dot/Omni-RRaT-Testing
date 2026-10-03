@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0">
+
+    <title>Admin Monitor</title>
+
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+
+            margin: 0;
+
+            background: #050505;
+
+            color: white;
+
+            font-family: Arial, sans-serif;
+
+            min-height: 100vh;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: center;
+
+        }
+
+
+        .box {
+
+            width: 90%;
+
+            max-width: 700px;
+
+            padding: 25px;
+
+            background:
+                rgba(255,255,255,0.08);
+
+            border:
+                1px solid rgba(255,255,255,0.15);
+
+            border-radius: 25px;
+
+            backdrop-filter: blur(20px);
+
+            -webkit-backdrop-filter: blur(20px);
+
+        }
+
+
+        h2 {
+
+            margin-top: 0;
+
+        }
+
+
+        video {
+
+            width: 100%;
+
+            border-radius: 18px;
+
+            background: #000;
+
+            display: block;
+
+        }
+
+
+        button {
+
+            width: 100%;
+
+            margin-top: 15px;
+
+            padding: 15px;
+
+            border: 0;
+
+            border-radius: 14px;
+
+            background: white;
+
+            color: black;
+
+            font-size: 16px;
+
+            font-weight: bold;
+
+        }
+
+
+        #status {
+
+            margin-top: 12px;
+
+            color: #aaa;
+
+            font-size: 14px;
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+
+<div class="box">
+
+    <h2>Admin Camera Monitor</h2>
+
+    <video
+        id="remoteVideo"
+        autoplay
+        playsinline>
+    </video>
+
+    <button id="connectBtn">
+        Connect to Camera
+    </button>
+
+    <div id="status">
+        Not connected
+    </div>
+
+</div>
+
+
+<script>
+
+const channel =
+    new BroadcastChannel("camera_monitor");
+
+
+const video =
+    document.getElementById("remoteVideo");
+
+
+const button =
+    document.getElementById("connectBtn");
+
+
+const status =
+    document.getElementById("status");
+
+
+let peer = null;
+
+
+/* WebRTC config */
+
+const rtcConfig = {
+
+    iceServers: [
+
+        {
+            urls:
+                "stun:stun.l.google.com:19302"
+        }
+
+    ]
+
+};
+
+
+/* Create connection */
+
+function createPeer() {
+
+    peer =
+        new RTCPeerConnection(rtcConfig);
+
+
+    /*
+        Camera's video arrives here.
+    */
+
+    peer.ontrack = event => {
+
+        video.srcObject =
+            event.streams[0];
+
+        status.textContent =
+            "LIVE — Camera connected";
+
+    };
+
+
+    /*
+        Send ICE candidates
+        back to Camera tab.
+    */
+
+    peer.onicecandidate = event => {
+
+        if (event.candidate) {
+
+            channel.postMessage({
+
+                type: "ice",
+
+                candidate:
+                    event.candidate
+
+            });
+
+        }
+
+    };
+
+
+    peer.onconnectionstatechange = () => {
+
+        status.textContent =
+            "Connection: " +
+            peer.connectionState;
+
+    };
+
+}
+
+
+/* Connect */
+
+async function connectCamera() {
+
+    try {
+
+        status.textContent =
+            "Connecting...";
+
+
+        createPeer();
+
+
+        /*
+            Create offer.
+
+            We don't need camera
+            permission on Admin.
+        */
+
+        const offer =
+            await peer.createOffer({
+
+                offerToReceiveVideo: true
+
+            });
+
+
+        await peer.setLocalDescription(
+            offer
+        );
+
+
+        channel.postMessage({
+
+            type: "offer",
+
+            offer:
+                peer.localDescription
+
+        });
+
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Connection failed";
+
+    }
+
+}
+
+
+button.addEventListener(
+    "click",
+    connectCamera
+);
+
+
+/*
+    Receive answer from Camera.
+*/
+
+channel.onmessage = async event => {
+
+    const data = event.data;
+
+
+    if (data.type === "answer") {
+
+        await peer.setRemoteDescription(
+
+            new RTCSessionDescription(
+                data.answer
+            )
+
+        );
+
+    }
+
+
+    /*
+        Receive ICE from Camera.
+    */
+
+    if (data.type === "ice") {
+
+        try {
+
+            await peer.addIceCandidate(
+
+                new RTCIceCandidate(
+                    data.candidate
+                )
+
+            );
+
+        }
+
+        catch (error) {
+
+            console.log(error);
+
+        }
+
+    }
+
+};
+
+</script>
+
+</body>
+
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #050505;
+            color: white;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .box {
+            width: 90%;
+            max-width: 500px;
+            padding: 25px;
+
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 25px;
+
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 18px;
+            background: #000;
+            display: none;
+        }
+
+        button {
+            width: 100%;
+            margin-top: 15px;
+            padding: 15px;
+
+            border: 0;
+            border-radius: 14px;
+
+            background: white;
+            color: black;
+
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        #status {
+            margin-top: 12px;
+            color: #aaa;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="box">
+
+    <h2>Camera</h2>
+
+    <video id="localVideo" autoplay playsinline muted></video>
+
+    <button id="startBtn">
+        Start Back Camera
+    </button>
+
+    <div id="status">
+        Camera is not started
+    </div>
+
+</div>
+
+
+<script>
+
+const channel = new BroadcastChannel("camera_monitor");
+
+const video = document.getElementById("localVideo");
+const button = document.getElementById("startBtn");
+const status = document.getElementById("status");
+
+let localStream = null;
+let peer = null;
+
+
+/* STUN server */
+
+const rtcConfig = {
+    iceServers: [
+        {
+            urls: "stun:stun.l.google.com:19302"
+        }
+    ]
+};
+
+
+/* Create WebRTC connection */
+
+function createPeer() {
+
+    peer = new RTCPeerConnection(rtcConfig);
+
+    /* Send camera tracks */
+
+    localStream.getTracks().forEach(track => {
+        peer.addTrack(track, localStream);
+    });
+
+
+    /* Send ICE candidates */
+
+    peer.onicecandidate = event => {
+
+        if (event.candidate) {
+
+            channel.postMessage({
+                type: "ice",
+                candidate: event.candidate
+            });
+
+        }
+
+    };
+
+
+    peer.onconnectionstatechange = () => {
+
+        status.textContent =
+            "Connection: " + peer.connectionState;
+
+    };
+
+}
+
+
+/* Start camera */
+
+async function startCamera() {
+
+    try {
+
+        status.textContent = "Requesting camera permission...";
+
+        localStream =
+            await navigator.mediaDevices.getUserMedia({
+
+                video: {
+                    facingMode: {
+                        ideal: "environment"
+                    }
+                },
+
+                audio: false
+
+            });
+
+
+        video.srcObject = localStream;
+
+        video.style.display = "block";
+
+        button.textContent = "Camera Running";
+
+        status.textContent =
+            "Back camera is running. Waiting for Admin...";
+
+        createPeer();
+
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Camera permission failed: " + error.message;
+
+    }
+
+}
+
+
+button.addEventListener("click", startCamera);
+
+
+/*
+    Admin sends an offer.
+*/
+
+channel.onmessage = async event => {
+
+    const data = event.data;
+
+
+    if (data.type === "offer") {
+
+        if (!localStream) {
+            status.textContent =
+                "Admin connected, but camera is not started.";
+            return;
+        }
+
+
+        /*
+            Admin's offer is received.
+        */
+
+        await peer.setRemoteDescription(
+            new RTCSessionDescription(data.offer)
+        );
+
+
+        const answer =
+            await peer.createAnswer();
+
+
+        await peer.setLocalDescription(answer);
+
+
+        channel.postMessage({
+
+            type: "answer",
+
+            answer: peer.localDescription
+
+        });
+
+    }
+
+
+    /*
+        Receive ICE from Admin.
+    */
+
+    if (data.type === "ice") {
+
+        try {
+
+            await peer.addIceCandidate(
+                new RTCIceCandidate(data.candidate)
+            );
+
+        }
+
+        catch (error) {
+
+            console.log(error);
+
+        }
+
+    }
+
+};
+
+</script>
+
+</body>
+</html>
